@@ -54,6 +54,11 @@ func PrintTimes(venueName string, times []client.TimeSlot, availableOnly bool) {
 
 // PrintBookableSlots prints courts/resources returned by the authenticated slots API.
 func PrintBookableSlots(slots []client.BookableSlot, err error) {
+	PrintBookableSlotsForVenue("", slots, err)
+}
+
+// PrintBookableSlotsForVenue prints bookable courts, with an optional venue heading.
+func PrintBookableSlotsForVenue(venueName string, slots []client.BookableSlot, err error) {
 	if err != nil {
 		fmt.Printf("  [error: %v]\n\n", err)
 		return
@@ -63,30 +68,82 @@ func PrintBookableSlots(slots []client.BookableSlot, err error) {
 		fmt.Println()
 		return
 	}
-	for i, s := range slots {
-		loc := s.SlotDisplayLocation
-		if loc == "" {
-			loc = s.Location.Name
-		}
+
+	s := slots[0]
+	if venueName != "" {
+		fmt.Printf("--- %s · %s–%s ---\n", venueName, s.StartsAt.Format24Hour, s.EndsAt.Format24Hour)
+	}
+
+	if len(slots) > 1 && bookableSlotsUniform(slots) {
 		price := s.Price.Formatted
 		if price == "" {
 			price = "—"
 		}
 		status := s.ActionToShow.Status
+		loc := courtLabel(s)
+		fmt.Printf("  %d courts · %s–%s   %-8s  %s each  %s\n",
+			len(slots),
+			s.StartsAt.Format24Hour,
+			s.EndsAt.Format24Hour,
+			price,
+			spacesLabel(s.Spaces),
+			status,
+		)
+		if loc != "" && loc != "Multiple" {
+			fmt.Printf("  (%s)\n", loc)
+		}
+		fmt.Println()
+		return
+	}
+
+	for i, slot := range slots {
+		loc := courtLabel(slot)
+		price := slot.Price.Formatted
+		if price == "" {
+			price = "—"
+		}
+		status := slot.ActionToShow.Status
 		if status == "" {
 			status = "—"
 		}
 		fmt.Printf("  %d. %s–%s   %-8s  %s  [%s]  %s\n",
 			i+1,
-			s.StartsAt.Format24Hour,
-			s.EndsAt.Format24Hour,
+			slot.StartsAt.Format24Hour,
+			slot.EndsAt.Format24Hour,
 			price,
-			spacesLabel(s.Spaces),
+			spacesLabel(slot.Spaces),
 			loc,
 			status,
 		)
 	}
 	fmt.Println()
+}
+
+func courtLabel(s client.BookableSlot) string {
+	if s.SlotDisplayLocation != "" && s.SlotDisplayLocation != "Multiple" {
+		return s.SlotDisplayLocation
+	}
+	if s.Location.Name != "" {
+		return s.Location.Name
+	}
+	return s.SlotDisplayLocation
+}
+
+func bookableSlotsUniform(slots []client.BookableSlot) bool {
+	if len(slots) < 2 {
+		return false
+	}
+	s0 := slots[0]
+	for _, s := range slots[1:] {
+		if s.StartsAt.Format24Hour != s0.StartsAt.Format24Hour ||
+			s.EndsAt.Format24Hour != s0.EndsAt.Format24Hour ||
+			s.Price.Formatted != s0.Price.Formatted ||
+			s.Spaces != s0.Spaces ||
+			s.ActionToShow.Status != s0.ActionToShow.Status {
+			return false
+		}
+	}
+	return true
 }
 
 func Print(results []VenueResult, availableOnly bool) {

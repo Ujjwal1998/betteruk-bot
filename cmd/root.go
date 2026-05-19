@@ -6,8 +6,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
-
 	"github.com/spf13/cobra"
 	"github.com/ujjwaltalwar/betteruk-bot/internal/client"
 	"github.com/ujjwaltalwar/betteruk-bot/internal/display"
@@ -29,7 +27,7 @@ var rootCmd = &cobra.Command{
 	Short: "Check Better UK activity slot availability near a postcode",
 	Example: `  betteruk-bot -p "N1 0SB"
   betteruk-bot -p SW1A1AA -c sports-hall-activities -a badminton-40min -d 2026-05-20
-  betteruk-bot -p EC1A1BB --debug`,
+  betteruk-bot search -p "N7 8AN" -a badminton-60min -d 2026-05-23`,
 	RunE: run,
 }
 
@@ -61,49 +59,25 @@ func Execute() error {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	postcode := strings.ToUpper(strings.TrimSpace(flagPostcode))
-	if !postcodeRe.MatchString(postcode) {
-		return fmt.Errorf("invalid UK postcode: %q", postcode)
-	}
-
-	c, err := client.New(flagDebug)
+	postcode, err := normalizePostcode(flagPostcode)
 	if err != nil {
-		return fmt.Errorf("init client: %w", err)
-	}
-
-	authToken := strings.TrimSpace(flagAuthToken)
-	if authToken == "" {
-		authToken = strings.TrimSpace(os.Getenv("BETTER_AUTH_TOKEN"))
-	}
-	if authToken != "" {
-		c.SetAuthToken(authToken)
-	}
-
-	fmt.Fprintln(os.Stderr, "Fetching session and CSRF token...")
-	if err := c.FetchCSRF(); err != nil {
-		return fmt.Errorf("fetch CSRF: %w", err)
-	}
-	if authToken != "" {
-		c.SetAuthToken(authToken)
-	}
-
-	fmt.Fprintf(os.Stderr, "Searching venues near %s...\n", postcode)
-	venues, err := c.SearchVenues(postcode)
-	if err != nil {
-		return fmt.Errorf("venue search: %w", err)
-	}
-	if len(venues) == 0 {
-		return fmt.Errorf("no venues found near %s", postcode)
-	}
-	if len(venues) > flagMaxVenues {
-		venues = venues[:flagMaxVenues]
+		return err
 	}
 
 	date := strings.TrimSpace(flagDate)
-	if date != "" {
-		if err := validateBookingDate(date, time.Now()); err != nil {
-			return err
-		}
+	if err := validateDateFlag(date); err != nil {
+		return err
+	}
+
+	authToken := resolveAuthToken(flagAuthToken)
+	c, err := initClient(flagDebug, authToken)
+	if err != nil {
+		return err
+	}
+
+	venues, err := fetchVenuesNear(c, postcode, flagMaxVenues)
+	if err != nil {
+		return err
 	}
 
 	return runInteractiveSession(c, venues, date)
@@ -130,10 +104,11 @@ func runInteractiveSession(c *client.Client, venues []client.Venue, date string)
 		switch step {
 		case stepVenue:
 			printCurrentDate(date)
+			printAuthStatus(c)
 			display.PrintVenues(venues)
 			idx, err := promptChoice("Enter venue number", len(venues))
-			if errors.Is(err, errDate) {
-				if err := pickDate(&date); err != nil {
+			if handled, err := handleChoicePromptErr(err, c, &date); handled {
+				if err != nil {
 					return err
 				}
 				continue
@@ -162,6 +137,7 @@ func runInteractiveSession(c *client.Client, venues []client.Venue, date string)
 
 		case stepCategory:
 			printCurrentDate(date)
+			printAuthStatus(c)
 			fmt.Fprintf(os.Stderr, "Fetching categories at %s...\n", venue.Slug)
 			var err error
 			categories, err = c.GetCategories(venue.Slug)
@@ -174,8 +150,8 @@ func runInteractiveSession(c *client.Client, venues []client.Venue, date string)
 
 			display.PrintCategories(categories)
 			idx, err := promptChoice("Enter category number", len(categories))
-			if errors.Is(err, errDate) {
-				if err := pickDate(&date); err != nil {
+			if handled, err := handleChoicePromptErr(err, c, &date); handled {
+				if err != nil {
 					return err
 				}
 				continue
@@ -192,6 +168,7 @@ func runInteractiveSession(c *client.Client, venues []client.Venue, date string)
 
 		case stepActivity:
 			printCurrentDate(date)
+			printAuthStatus(c)
 			fmt.Fprintf(os.Stderr, "Fetching activities in %s...\n", categorySlug)
 			var err error
 			activities, err = c.GetCategoryActivities(venue.Slug, categorySlug)
@@ -204,8 +181,8 @@ func runInteractiveSession(c *client.Client, venues []client.Venue, date string)
 
 			display.PrintActivities(activities)
 			idx, err := promptChoice("Enter activity number", len(activities))
-			if errors.Is(err, errDate) {
-				if err := pickDate(&date); err != nil {
+			if handled, err := handleChoicePromptErr(err, c, &date); handled {
+				if err != nil {
 					return err
 				}
 				continue
@@ -290,10 +267,15 @@ func showTimesAndPrompt(c *client.Client, venue client.Venue, activitySlug, acti
 					return false, err
 				}
 				break // refetch times for new date
+			case "auth":
+				if err := promptSetAuthToken(c); err != nil {
+					return false, err
+				}
+				continue
 			case "slot":
 				t := filtered[choice-1]
 				if c.AuthToken() == "" {
-					fmt.Fprintln(os.Stderr, "Login required for bookable courts. Set BETTER_AUTH_TOKEN or --auth-token.")
+					fmt.Fprintln(os.Stderr, "Login required for bookable courts. Press a to paste token, or set BETTER_AUTH_TOKEN.")
 					continue
 				}
 				fmt.Fprintf(os.Stderr, "Fetching bookable courts for %s–%s...\n",

@@ -1,6 +1,9 @@
 # betteruk-bot
 
-A CLI to browse **Better UK** leisure centre availability: search venues by postcode, pick a category and activity, view time slots, and (when logged in) inspect bookable courts.
+A CLI to browse **Better UK** leisure centre availability in two modes:
+
+- **Browse** (default) — pick a venue, then category, activity, and date
+- **Search** — pick sport, date, and postcode; scan all nearby venues at once
 
 ## Requirements
 
@@ -33,9 +36,44 @@ betteruk-bot -p SW1A1AA -c sports-hall-activities -a badminton-40min -d 2026-05-
 # Bookable courts (copy Bearer token from browser DevTools)
 export BETTER_AUTH_TOKEN='v4.local....'
 betteruk-bot -p "N7 8AN"
+
+# Reverse search: sport + date + postcode across many venues
+betteruk-bot search -p "N7 8AN" -a badminton-60min -d 2026-05-23
 ```
 
-## Flags
+## Commands
+
+### `betteruk-bot` (browse)
+
+Walk through one venue at a time. See [Interactive flow](#interactive-flow-browse) below.
+
+### `betteruk-bot search`
+
+Find availability for a known activity across nearby venues.
+
+```bash
+betteruk-bot search -p "N7 8AN" -a badminton-60min -d 2026-05-23
+```
+
+1. Session + venue search near postcode
+2. Activity from catalog (or `-a` slug) and date (or `-d` / interactive picker)
+3. Concurrent `GetTimes` for each venue (`--scan-venues`, default 10)
+4. Aggregated table: venue, time, price, spaces
+5. Pick a row to drill into bookable courts (`GetSlots`, login required)
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--postcode` | `-p` | *(required)* | UK postcode |
+| `--activity` | `-a` | | Activity slug (interactive catalog if omitted) |
+| `--date` | `-d` | | Date `YYYY-MM-DD` (today … +5 days) |
+| `--scan-venues` | | `10` | How many nearby venues to scan |
+| `--available-only` | | `true` | Only include times with spaces &gt; 0 |
+| `--auth-token` | | | Bearer token for bookable courts |
+| `--debug` | | `false` | Raw HTTP on stderr |
+
+After results: `(1-N=bookable courts, d=date, a=auth, b=back, q=quit)`. Press `d` to change date and re-scan; `a` to paste auth token.
+
+## Flags (browse)
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
@@ -50,7 +88,7 @@ betteruk-bot -p "N7 8AN"
 
 Environment variable: `BETTER_AUTH_TOKEN` (same as `--auth-token`).
 
-## Interactive flow
+## Interactive flow (browse)
 
 After startup the bot:
 
@@ -76,6 +114,7 @@ Available at **every** numbered prompt and after times are shown:
 |-----|--------|
 | `1`–`N` | Select list item |
 | `d` | Set or change date |
+| `a` | Paste Better auth token (for bookable courts) |
 | `b` | Go back one step |
 | `q` | Quit (after times are displayed) |
 | Enter | Accept default date when prompted |
@@ -127,8 +166,11 @@ Without a token you can still browse venues, categories, activities, and times.
 betteruk-bot/
 ├── main.go                 # Entry point
 ├── cmd/
-│   ├── root.go             # Cobra CLI, interactive session loop
-│   ├── prompt.go           # stdin prompts (choice, date, after-times menu)
+│   ├── root.go             # Browse command (default)
+│   ├── search.go           # Search subcommand
+│   ├── setup.go            # Shared client/postcode setup
+│   ├── activities.go       # Activity catalog for search
+│   ├── prompt.go           # stdin prompts
 │   └── date.go             # Allowed date range and validation
 └── internal/
     ├── client/             # HTTP client and Better API
@@ -142,9 +184,13 @@ betteruk-bot/
 | Function | Description |
 |----------|-------------|
 | `Execute()` | Run the Cobra root command |
-| `run()` | Validate postcode, init client, search venues, start session |
-| `runInteractiveSession()` | State machine: venue → category → activity → date → times |
-| `showTimesAndPrompt()` | Fetch times, display menu, optional bookable-court lookup |
+| `run()` | Browse: validate postcode, init client, start session |
+| `runSearch()` | Search: postcode + activity + date, scan venues |
+| `runInteractiveSession()` | Browse state machine |
+| `runSearchSession()` | Search scan loop + drill-down |
+| `showTimesAndPrompt()` | Fetch times at one venue, optional slots drill-down |
+| `resolveActivity()` | Activity catalog picker for search |
+| `initClient()` / `fetchVenuesNear()` | Shared HTTP setup |
 | `pickDate()` | Interactive date picker wrapper |
 | `promptChoice()` | Numbered list input (`b` = back, `d` = date) |
 | `promptDate()` | Date list input (today … +5 days) |
@@ -168,6 +214,8 @@ betteruk-bot/
 | `GetCategoryActivities(venue, category)` | List activities in a category |
 | `GetTimes(venue, activity, date)` | Available time windows (array or object JSON) |
 | `GetSlots(venue, activity, date, start, end, compositeKey)` | Bookable courts for one time (login required) |
+| `SearchTimesAcrossVenues(venues, activity, date, workers, availableOnly)` | Fan-out times scan (search mode) |
+| `VenueTime` | One venue + time slot pair from search |
 | `Venue` | `Slug`, `Name`, `Distance` |
 | `Category` | `Slug`, `Name`, `HasChildren` |
 | `Activity` | `Slug`, `Name` |
@@ -183,6 +231,8 @@ betteruk-bot/
 | `PrintActivities()` | Numbered activity list (stderr) |
 | `PrintTimes()` | Numbered time windows with price and spaces (stdout) |
 | `PrintBookableSlots()` | Bookable court details after slots API call |
+| `PrintSearchResults()` | Aggregated search table (stdout) |
+| `BuildSearchRows()` | Rows for search drill-down |
 | `Print()` | Legacy combined venue + slots output |
 
 ## Examples
@@ -199,6 +249,12 @@ betteruk-bot -p "N7 8AN" --available-only=false
 
 # Debug raw HTTP
 betteruk-bot -p "N7 8AN" --debug
+
+# Search all badminton 60min slots near postcode (scan 15 venues)
+betteruk-bot search -p "N7 8AN" -a badminton-60min --scan-venues 15
+
+# Interactive search (pick activity + date from menus)
+betteruk-bot search -p "N7 8AN"
 ```
 
 ## Development

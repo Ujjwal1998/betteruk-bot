@@ -11,15 +11,17 @@ import (
 )
 
 var (
-	errBack = errors.New("back")
-	errDate = errors.New("date")
+	errBack        = errors.New("back")
+	errDate        = errors.New("date")
+	errAuth        = errors.New("auth")
+	errRestartScan = errors.New("restart scan")
 )
 
 var stdin = bufio.NewScanner(os.Stdin)
 
 func promptChoice(label string, count int) (int, error) {
 	for {
-		fmt.Fprintf(os.Stderr, "%s (1-%d, d=date, b=back): ", label, count)
+		fmt.Fprintf(os.Stderr, "%s (1-%d, d=date, a=auth, b=back): ", label, count)
 		if !stdin.Scan() {
 			if err := stdin.Err(); err != nil {
 				return 0, fmt.Errorf("read choice: %w", err)
@@ -33,11 +35,13 @@ func promptChoice(label string, count int) (int, error) {
 			return 0, errBack
 		case "d":
 			return 0, errDate
+		case "a":
+			return 0, errAuth
 		}
 
 		choice, err := strconv.Atoi(input)
 		if err != nil || choice < 1 || choice > count {
-			fmt.Fprintf(os.Stderr, "Enter a number from 1 to %d, d, or b.\n", count)
+			fmt.Fprintf(os.Stderr, "Enter a number from 1 to %d, d, a, or b.\n", count)
 			continue
 		}
 		return choice, nil
@@ -90,9 +94,9 @@ func promptDate(current string) (string, error) {
 func promptAfterTimes(count int) (action string, choice int, err error) {
 	for {
 		if count == 0 {
-			fmt.Fprint(os.Stderr, "(d=date, b=back, q=quit): ")
+			fmt.Fprint(os.Stderr, "(d=date, a=auth, b=back, q=quit): ")
 		} else {
-			fmt.Fprintf(os.Stderr, "(1-%d=bookable courts, d=date, b=back, q=quit): ", count)
+			fmt.Fprintf(os.Stderr, "(1-%d=bookable courts, d=date, a=auth, b=back, q=quit): ", count)
 		}
 		if !stdin.Scan() {
 			if err := stdin.Err(); err != nil {
@@ -109,15 +113,55 @@ func promptAfterTimes(count int) (action string, choice int, err error) {
 			return "quit", 0, nil
 		case "d":
 			return "date", 0, nil
+		case "a":
+			return "auth", 0, nil
 		}
 
 		if count == 0 {
-			fmt.Fprintln(os.Stderr, "Enter d, b, or q.")
+			fmt.Fprintln(os.Stderr, "Enter d, a, b, or q.")
 			continue
 		}
 		choice, err := strconv.Atoi(input)
 		if err != nil || choice < 1 || choice > count {
-			fmt.Fprintf(os.Stderr, "Enter a number from 1 to %d, d, b, or q.\n", count)
+			fmt.Fprintf(os.Stderr, "Enter a number from 1 to %d, d, a, b, or q.\n", count)
+			continue
+		}
+		return "slot", choice, nil
+	}
+}
+
+// promptAfterSearchResults is used after the cross-venue search table (rows are time slots, not courts).
+func promptAfterSearchResults(count int) (action string, choice int, err error) {
+	for {
+		if count == 0 {
+			fmt.Fprint(os.Stderr, "(d=date, a=auth, q=quit): ")
+		} else {
+			fmt.Fprintf(os.Stderr, "(1-%d=view courts, d=date, a=auth, q=quit): ", count)
+		}
+		if !stdin.Scan() {
+			if err := stdin.Err(); err != nil {
+				return "", 0, fmt.Errorf("read choice: %w", err)
+			}
+			return "", 0, fmt.Errorf("no choice entered")
+		}
+
+		input := strings.TrimSpace(stdin.Text())
+		switch strings.ToLower(input) {
+		case "q":
+			return "quit", 0, nil
+		case "d":
+			return "date", 0, nil
+		case "a":
+			return "auth", 0, nil
+		}
+
+		if count == 0 {
+			fmt.Fprintln(os.Stderr, "Enter d, a, or q.")
+			continue
+		}
+		choice, err := strconv.Atoi(input)
+		if err != nil || choice < 1 || choice > count {
+			fmt.Fprintf(os.Stderr, "Enter a number from 1 to %d, d, a, or q.\n", count)
 			continue
 		}
 		return "slot", choice, nil

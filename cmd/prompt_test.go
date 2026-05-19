@@ -115,6 +115,60 @@ func TestPromptDateChoice(t *testing.T) {
 	}
 }
 
+func TestPromptAfterSearchResultsAuthAction(t *testing.T) {
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	stdin = bufio.NewScanner(os.Stdin)
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		stdin = bufio.NewScanner(os.Stdin)
+	})
+
+	if _, err := w.WriteString("a\n"); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	action, _, err := promptAfterSearchResults(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "auth" {
+		t.Fatalf("got action %q, want auth", action)
+	}
+}
+
+func TestPromptAfterTimesAuthAction(t *testing.T) {
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	stdin = bufio.NewScanner(os.Stdin)
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		stdin = bufio.NewScanner(os.Stdin)
+	})
+
+	if _, err := w.WriteString("a\n"); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	action, _, err := promptAfterTimes(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "auth" {
+		t.Fatalf("got action %q, want auth", action)
+	}
+}
+
 func TestPromptAfterTimesDateAction(t *testing.T) {
 	oldStdin := os.Stdin
 	r, w, err := os.Pipe()
